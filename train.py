@@ -10,7 +10,7 @@ from PIL import Image
 
 ##########################################################################################
 #NOTE: the game needs to be running prior to this script's execution
-###########################################################################################
+##########################################################################################
 
 ############################################
 # action2key: executes the action
@@ -81,6 +81,17 @@ if __name__ == "__main__":
 	# Start the game if in menu and pause for one second
 	MOUSE.click(location[0], location[1], 1)
 	CURRENT_ACTION = action2key(3, CURRENT_ACTION, KEYBOARD, ACTION_OPTIONS)
-	time.sleep(1)
+	time.sleep(0.5324)
 	CURRENT_ACTION = action2key(0, CURRENT_ACTION, KEYBOARD, ACTION_OPTIONS)
-	screenshot(location,'ingame.png')
+
+	# Wait for the game to load
+	while True:
+		l= pyscreeze.locateOnScreen('START_FLAG.png')
+		print (l)
+		if l:
+			print( '[MAIN] EPISODE START' )
+			break
+
+
+	
+
