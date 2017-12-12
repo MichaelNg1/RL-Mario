@@ -33,9 +33,7 @@ import CNN as cnn
 def action2key(action, curr, keyb, action_dict):
 	
 	# Release keys from previous commands
-	if curr:
-		for el in curr:
-			keyb.release_key( el )
+	releasekeys(curr, keyb)
 
 	# Assign commands based on "action" where action is an int (4 total)
 	curr = action_dict[action]
@@ -47,25 +45,29 @@ def action2key(action, curr, keyb, action_dict):
 
 	return curr
 
+def releasekeys(curr, keyb):
+	if curr:
+		for el in curr:
+			keyb.release_key( el )
 ##########################################################################################
 # screenshot: returns a processed image and saves its according to filename
 ##########################################################################################
-def screenshot(loc, filename):
+def screenshot(loc):
 	x = loc[0]
 	y = loc[1]
 	width = loc[2]
 	height = loc[3]
-	height_compensation = 0
-	y -= height_compensation
-	height += height_compensation
+	# height_compensation = 0
+	# y -= height_compensation
+	# height += height_compensation
 	location_region = (x, y, width, height)
 
 	# Test screenshot
 	im = pyscreeze.screenshot(region=location_region)
-	im_resize = im.resize((84, 84), Image.ANTIALIAS)
+	# im_resize = im.resize((84, 84), Image.ANTIALIAS)
+	im_resize = im.resize((84, 84))
 	im_gray = im_resize.convert('L')
-	im_gray.save( filename )
-
+	
 	return im_gray
 
 ##########################################################################################
@@ -86,6 +88,8 @@ if __name__ == "__main__":
 				3: ['a'],
 				4: [KEYBOARD.right_key, 'a'],
 				5: [KEYBOARD.left_key, 'a']}
+	NUM_ACTIONS = 6
+	EPS = 0.1
 	REWARDS_M = {
 		'standing': 0,
 		'walk': 1,
@@ -101,7 +105,7 @@ if __name__ == "__main__":
 	REWARDS_G = {
 	'main menu': 0,
 	'load screen': 0,
-	'time out': -20,
+	'time out': -100,
 	'game over': -20,
 	'level1': 0}
 
@@ -149,9 +153,6 @@ if __name__ == "__main__":
 			print( '[MAIN] Locating Game Screen: Success!' )
 			break
 
-	test = screenshot(location, 'gray.png')
-	print( test )
-
 	############################################
 	# Train the CNN
 	############################################
@@ -168,6 +169,7 @@ if __name__ == "__main__":
 			CURRENT_ACTION = action2key(0, CURRENT_ACTION, KEYBOARD, ACTION_OPTIONS)
 			time.sleep(2)
 
+		# Wait until it is in the level
 		while GAME_STATE != 'level1':
 			# Get new GameState
 			file = open(FILENAME_GAME, 'r')
@@ -178,7 +180,22 @@ if __name__ == "__main__":
 		# Collect data on episode
 		############################################
 		while GAME_STATE == 'level1':
-			# CURRENT_ACTION = action2key(1, CURRENT_ACTION, KEYBOARD, ACTION_OPTIONS)
+			tstart = time.time()
+
+			# Get Screenshot
+			state = np.array( screenshot(location), dtype=float )
+			state_tensor = torch.unsqueeze( torch.Tensor( state ), 0 )
+			state_tensor = torch.unsqueeze( state_tensor, 0 )
+			cnn_input = Variable( state_tensor.cuda() )
+
+			q_values = dqn_net( cnn_input )
+			q_values = q_values.data.cpu().numpy()
+			a_max = np.argmax( q_values )
+			p_eps = (EPS / NUM_ACTIONS) * np.ones( NUM_ACTIONS )
+			p_eps[a_max] = (EPS / NUM_ACTIONS) + 1 - EPS
+			a = int( np.random.choice( NUM_ACTIONS, 1, p=p_eps) )
+
+			CURRENT_ACTION = action2key(a, CURRENT_ACTION, KEYBOARD, ACTION_OPTIONS)
 
 			# Get new GameState
 			file = open(FILENAME_GAME, 'r')
@@ -192,11 +209,14 @@ if __name__ == "__main__":
 			if content != '':
 				MARIO_STATE = content
 
-			print( MARIO_STATE )
 			r = REWARDS_G[GAME_STATE] + REWARDS_M[MARIO_STATE]
-			print(r)
 
-			time.sleep(0.25)
+			# time.sleep(0.25)
+			tend = time.time()
+			print('Processing Time: %.3f sec || Action: %i' %(tend - tstart, a))
+
+		# Release all keys
+		CURRENT_ACTION = action2key(0, CURRENT_ACTION, KEYBOARD, ACTION_OPTIONS)
 
 		############################################
 		# Train on Episode + Experience Replay
@@ -204,7 +224,8 @@ if __name__ == "__main__":
 		# Note the game should train on 3 different episodes before it 
 		print( '[MAIN] Training Model...' )
 
-		# Wait until the game is back to the main menu
+		
+		# Wait until the game is back to the main menu to start again
 		while GAME_STATE != 'main menu':
 			# Get new GameState
 			file = open(FILENAME_GAME, 'r')
