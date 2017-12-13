@@ -100,7 +100,7 @@ if __name__ == "__main__":
 		'flag pole': 10,
 		'walking to castle': 10,
 		'end of level fall': 10,
-		'death jump': -1}
+		'death jump': -10}
 	REWARDS_A = {0: -1,
 				1: 1,
 				2: -1,
@@ -115,7 +115,7 @@ if __name__ == "__main__":
 	'level1': 0}
 
 	SAVE_PATH_CNN = 'CNN.tar'
-
+	SAVE_PATH_ER = 'ER.txt'
 	# The possible gamestates are:
 	# MAIN_MENU = 'main menu'
 	# LOAD_SCREEN = 'load screen'
@@ -139,6 +139,8 @@ if __name__ == "__main__":
 	MARIO_STATE = 'standing'
 	FILENAME_MARIO = 'mario_state.txt'
 
+	EXPERIENCE_REPLAY = []
+	N_MAX = 500
 	############################################
 	# Set up the CNN
 	############################################
@@ -191,21 +193,24 @@ if __name__ == "__main__":
 		############################################
 		# Collect data on episode
 		############################################
-		EPISODE_SS = []
-		EPISODE_STATES = []
-		EPISODE_ACTIONS = []
+		PREV_SS = []
+		PREV_STATES = []
+		PREV_ACTIONS = []
 		while GAME_STATE == 'level1' and MARIO_STATE != 'death jump':
 			tstart = time.time()
 
-			# Get Screenshot
+
+			# ###########################################
+			# Execute the action
+			# ###########################################
 			state = np.array( screenshot(location), dtype=float )
 			state_tensor = torch.unsqueeze( torch.Tensor( state ), 0 )
 			state_tensor = torch.unsqueeze( state_tensor, 0 )
-			cnn_input = Variable( state_tensor.cuda() )
+			cnn_input = Variable( state_tensor.cuda() ).detach()
 
 			q_values = dqn_net( cnn_input )
-			q_values = q_values.data.cpu().numpy()
-			a_max = np.argmax( q_values )
+			q_values_np = q_values.data.cpu().numpy()
+			a_max = np.argmax( q_values_np )
 			p_eps = (EPS / NUM_ACTIONS) * np.ones( NUM_ACTIONS )
 			p_eps[a_max] = (EPS / NUM_ACTIONS) + 1 - EPS
 			a = int( np.random.choice( NUM_ACTIONS, 1, p=p_eps) )
@@ -224,73 +229,84 @@ if __name__ == "__main__":
 			if content != '':
 				MARIO_STATE = content
 
+
+			# ###########################################
+			# Train the NN
+			# ###########################################
+			if PREV_ACTIONS:
+
+				# Get current reward
+				curr_reward = REWARDS_G[GAME_STATE] + REWARDS_M[MARIO_STATE] \
+					+ REWARDS_A[PREV_ACTIONS]
+
+				# Save into Experience Replay
+				if len(EXPERIENCE_REPLAY) == N_MAX:
+					EXPERIENCE_REPLAY.pop(0)
+				EXPERIENCE_REPLAY.append( [ PREV_SS, PREV_STATES, [PREV_ACTIONS], [curr_reward], state ] )
+				
+				# Choose experience
+				exp = np.random.randint(len(EXPERIENCE_REPLAY))
+				ss = EXPERIENCE_REPLAY[exp][0]
+				aa = EXPERIENCE_REPLAY[exp][2][0]
+				rr = EXPERIENCE_REPLAY[exp][3][0]
+				ssp = EXPERIENCE_REPLAY[exp][4]
+
+				# Train the NN
+				optimizer.zero_grad()
+
+				# The current state
+				state_temp= ss
+				state_tensor_temp = torch.unsqueeze( torch.Tensor( state_temp ), 0 )
+				state_tensor_temp = torch.unsqueeze( state_tensor_temp, 0 )
+				cnn_input_temp = Variable( state_tensor_temp.cuda() )
+				q_val = dqn_net( cnn_input_temp )
+
+				# The next state
+				state_temp= ssp
+				state_tensor_temp = torch.unsqueeze( torch.Tensor( state_temp ), 0 )
+				state_tensor_temp = torch.unsqueeze( state_tensor_temp, 0 )
+				cnn_input_temp = Variable( state_tensor_temp.cuda() )
+				q_valp = dqn_net( cnn_input_temp ).detach()
+
+				# Set up constants for the loss
+				max_val, max_ind = torch.max(q_valp.data, 1)
+
+				q_val_copy = q_val.data.clone()
+				q_val_copy[0, aa] = GAMMA * max_val[0][0]
+				q_val_copy = Variable(q_val_copy, requires_grad=False)
+
+				#Define the rewards
+				r = torch.zeros(q_val.size())
+				r[0, aa] = rr
+				r = Variable(r, requires_grad=False).cuda()
+
+				loss = nn_loss(q_val, r + q_val_copy)
+				loss.backward()
+				optimizer.step()
+
 			# Save episode information
-			if EPISODE_ACTIONS:
-				EPISODE_SS.append( state )
-				EPISODE_ACTIONS.append( [a] )
-				EPISODE_STATES.append( [GAME_STATE, MARIO_STATE] )
-			else:
-				EPISODE_SS = [state]
-				EPISODE_ACTIONS = [ [a] ]
-				EPISODE_STATES = [ [GAME_STATE, MARIO_STATE] ]				
+			PREV_SS = state
+			PREV_ACTIONS = a
+			PREV_STATES = [GAME_STATE, MARIO_STATE]			
 
 			# time.sleep(0.25)
 			tend = time.time()
-			print( q_values )
+			print( q_values_np )
 			print('Processing Time: %.3f sec || Action: %i || MS: %s' %(tend - tstart, a, MARIO_STATE))
 
 		# Release all keys
 		CURRENT_ACTION = action2key(0, CURRENT_ACTION, KEYBOARD, ACTION_OPTIONS)
+			
 
-		############################################
-		# Train on Episode + Experience Replay
-		############################################
-		# Note the game should train on 3 different episodes before it 
-		print( '[MAIN] Training Model...' )
-		N = len( EPISODE_ACTIONS )
-
-		for iter in range(N-1):
-			a = EPISODE_ACTIONS[iter]
-
-			optimizer.zero_grad()
-
-			state = EPISODE_SS[iter]
-			state_tensor = torch.unsqueeze( torch.Tensor( state ), 0 )
-			state_tensor = torch.unsqueeze( state_tensor, 0 )
-			cnn_input = Variable( state_tensor.cuda() )
-			q_val = dqn_net( cnn_input )
-
-			state = EPISODE_SS[iter+1]
-			state_tensor = torch.unsqueeze( torch.Tensor( state ), 0 )
-			state_tensor = torch.unsqueeze( state_tensor, 0 )
-			cnn_input = Variable( state_tensor.cuda() )
-			q_valp = dqn_net( cnn_input ).detach()
-
-			# Set up constants for the loss
-			max_val, max_ind = torch.max(q_valp.data, 1)
-			max_ind = max_ind.cpu().numpy()[0][0]
-
-			q_val_copy = q_val.data.clone()
-			q_val_copy[0, max_ind] = GAMMA * max_val[0][0]
-			q_val_copy = Variable(q_val_copy, requires_grad=False)
-
-			#Define the rewards
-			gs = EPISODE_STATES[iter+1][0]
-			ms = EPISODE_STATES[iter+1][1]
-			r = torch.zeros(q_val.size())
-			r[0, max_ind] = REWARDS_G[gs] + REWARDS_M[ms] + REWARDS_A[a[0]]
-			r = Variable(r, requires_grad=False).cuda()
-
-			q_val.data.cpu()
-			loss = nn_loss(q_val, r + q_val_copy)
-			loss.backward()
-			optimizer.step()
-
-		print('[MAIN] Done!')
+		print('[MAIN] Episode Complete')
 		# Save the results
 		torch.save(dqn_net.state_dict(), SAVE_PATH_CNN)
 		print('[MAIN] Model Saved s: ', SAVE_PATH_CNN)
-
+		# file = open(SAVE_PATH_ER, 'w')
+		# file.write(EXPERIENCE_REPLAY)
+		# file.close()
+		# print('[MAIN] Saved ER: ', SAVE_PATH_ER)
+		
 		# Wait until the game is back to the main menu to start again
 		MARIO_STATE = 'standing'
 		while GAME_STATE != 'main menu':

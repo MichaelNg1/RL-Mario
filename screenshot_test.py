@@ -6,7 +6,7 @@ raw_input()input("Press Enter to continue...")
 '''
 if __name__ == "__main__":
     while True:
-        location = pyscreeze.locateOnScreen('D:/Documents/MR_RL/locate_window.png')
+        location = pyscreeze.locateOnScreen('locate_window.png')
         print location
         if location:
             print location
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     y -= height_compensation
     height += height_compensation
     location_region = (x, y, width, height)
-    time.sleep(10)
+    time.sleep(1)
 
     for i in range(100):
         # screenshot every 0.5 second
@@ -29,6 +29,6 @@ if __name__ == "__main__":
         im = pyscreeze.screenshot(region=location_region)
         im_resize = im.resize((84, 84), Image.ANTIALIAS)
         im_gray = im_resize.convert('L')
-        im_gray.save(str(i)+'gray.jpg')
+        # im_gray.save(str(i)+'gray.jpg')
         t2 = time.time()
         print t2-t1
